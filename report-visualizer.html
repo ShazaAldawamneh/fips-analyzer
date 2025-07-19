@@ -115,6 +115,23 @@
       align-items: center;
       gap: 0.7em;
     }
+    .copy-call-tree-btn {
+      background: none;
+      color: #888;
+      border: none;
+      border-radius: 3px;
+      padding: 0 0.15em;
+      font-size: 1.1em;
+      font-family: inherit;
+      cursor: pointer;
+      margin-left: 0.2em;
+      transition: color 0.15s, background 0.15s;
+      vertical-align: middle;
+    }
+    .copy-call-tree-btn:hover, .copy-call-tree-btn:focus {
+      color: #217dbb;
+      background: #e3eafc;
+    }
   </style>
 </head>
 <body>
@@ -122,6 +139,12 @@
   <div id="drop-zone">Drop your report JSON file here</div>
   <div id="file-name"></div>
   <div id="filter-indicator" style="display:none;"></div>
+  <div style="margin-bottom: 1em;">
+      <label>
+        <input type="checkbox" id="filter-standard-functions" style="margin-right: 0.5em;">
+        Hide standard Go interface functions (Read, Write, Error, Close, String) to reduce common interface confusion
+      </label>
+    </div>
   <div id="visualization"></div>
   <script>
     const dropZone = document.getElementById('drop-zone');
@@ -164,7 +187,14 @@
       }
     });
 
+    document.getElementById('filter-standard-functions').addEventListener('change', () => {
+      visualizeReport(currentData, currentFilter);
+    });
+
     function visualizeReport(data, filterPackagePath = null) {
+      const hideStandardFunctions = document.getElementById('filter-standard-functions').checked;
+      const standardFunctions = new Set(['Write', 'Error', 'Read', 'Close', 'String']);
+
       // Group usages by crypto module
       if (!data.detected_usages || !Array.isArray(data.detected_usages)) {
         viz.innerHTML = '<div style="color:red">No detected_usages found in report.</div>';
@@ -174,29 +204,37 @@
       if (filterPackagePath) {
         usages = usages.filter(d => Array.isArray(d.call_tree) && d.call_tree.some(node => node.package_path === filterPackagePath));
       }
+      if (hideStandardFunctions) {
+        usages = usages.filter(d => !standardFunctions.has(d.function));
+      }
+
       const groups = {};
       usages.forEach(d => {
         const module = d.package || 'unknown';
         if (!groups[module]) groups[module] = [];
         groups[module].push(d);
       });
+
       let html = '';
       Object.entries(groups).forEach(([module, usages], idx) => {
         const moduleId = `module-${idx}`;
-        html += `<div class=\"group\">`;
-        html += `<div class=\"module\" style=\"cursor:pointer;\" onclick=\"toggleModule('${moduleId}')\">▶ Module: <b>${module}</b> (${usages.length} usage${usages.length !== 1 ? 's' : ''})</div>`;
-        html += `<div id=\"${moduleId}\" class=\"module-content\" style=\"display:none;\"><ul>`;
+        html += `<div class="group">`;
+        html += `<div class="module" style="cursor:pointer;" onclick="toggleModule('${moduleId}')">▶ Module: <b>${module}</b> (${usages.length} usage${usages.length !== 1 ? 's' : ''})</div>`;
+        html += `<div id="${moduleId}" class="module-content" style="display:none;"><ul>`;
         usages.forEach(d => {
-          html += `<li><b>${d.function}</b> called by <b>${d.caller_function}</b> <span style=\"color:#888\">(${d.call_site}, ${d.package_path})</span>`;
+          html += `<li><b>${d.function}</b> called by <b>${d.caller_function}</b> <span style="color:#888">(${d.call_site}, ${d.package_path})</span>`;
           if (d.call_tree && Array.isArray(d.call_tree) && d.call_tree.length > 0) {
-            html += `<div class=\"call-tree\">`;
-            html += `<div class=\"call-tree-header\">Call Path (${d.call_tree.length} step${d.call_tree.length !== 1 ? 's' : ''}):</div>`;
-            html += `<div class=\"call-path\">`;
+            html += `<div class="call-tree">`;
+            html += `<div class="call-tree-header">Call Path (${d.call_tree.length} step${d.call_tree.length !== 1 ? 's' : ''}):</div>`;
+            html += `<div class="call-path">`;
             d.call_tree.forEach((node, index) => {
               if (index > 0) {
-                html += `<span class=\"call-arrow\">→</span>`;
+                html += `<span class="call-arrow">→</span>`;
               }
-              html += `<span class=\"call-label\" title=\"Package: ${node.package_path}\" data-package=\"${node.package_path}\">${node.function}</span>`;
+              html += `<span class="call-label" title="Package: ${node.package_path}" data-package="${node.package_path}">${node.function}</span>`;
+              if (index === d.call_tree.length - 1) {
+                html += `<span class='copy-call-tree-btn' title='Copy call tree' style='margin-left:0.4em;vertical-align:middle;cursor:pointer;display:inline-block;'>📋</span><span class='copy-confirm' style='display:none;margin-left:0.4em;color:#27ae60;font-size:0.95em;'>Copied!</span>`;
+              }
             });
             html += `</div></div>`;
           }
@@ -206,6 +244,7 @@
         html += '</div>';
       });
       viz.innerHTML = html;
+
       // Add click listeners for call-labels
       document.querySelectorAll('.call-label').forEach(el => {
         el.addEventListener('click', function(e) {
@@ -233,10 +272,28 @@
             showFilterIndicator(pkg);
             removeDropdowns();
           });
-          // Remove dropdown on click elsewhere
           setTimeout(() => {
             document.addEventListener('click', removeDropdowns, { once: true });
           }, 0);
+        });
+      });
+
+      // Add click listeners for copy-call-tree icons
+      document.querySelectorAll('.copy-call-tree-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+          const callTreeDiv = btn.closest('.call-tree');
+          const callPathDiv = callTreeDiv.querySelector('.call-path');
+          let text = '';
+          callPathDiv.querySelectorAll('.call-label').forEach((el, idx, arr) => {
+            text += el.textContent;
+            if (idx < arr.length - 1) text += ' -> ';
+          });
+          navigator.clipboard.writeText(text).then(() => {
+            const confirm = callTreeDiv.querySelector('.copy-confirm');
+            confirm.style.display = 'inline';
+            setTimeout(() => { confirm.style.display = 'none'; }, 1200);
+          });
         });
       });
     }
