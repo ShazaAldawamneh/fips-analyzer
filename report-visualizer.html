@@ -243,7 +243,76 @@
         html += '</ul></div>';
         html += '</div>';
       });
+      // add download button for csv
+      html += '<button id="download-csv-btn" class="filter-btn" style="margin-bottom: 1em;">Download CSV</button>'
       viz.innerHTML = html;
+
+      // add event listener for download button
+      document.getElementById('download-csv-btn').addEventListener('click', () => {
+      if (!currentData || !currentData.detected_usages) return ;
+
+      // placeholders, to give idea of what to enter
+      const product = prompt("Enter Product Name:", "OpenShift API Server");
+      const repo = prompt("Enter Repository URL:", "https://github.com/example/repo");
+      const entrypoint = prompt("Enter Entrypoint Path:", "cmd/example/main.go");
+
+      if (!product || !repo || !entrypoint) {
+        alert("All metadata fields are required.");
+        return;
+      }
+
+      const csvRows = [
+        ["Product", "Repository", "Entrypoint", "Crypto module", "Function called", "Status", "Comment", "Dependency Graph"]
+      ];
+
+      const usages = currentData.detected_usages.slice().sort((a, b) => a.function.localeCompare(b.function));
+
+      usages.forEach((usage, index) => {
+        const row = Array(8).fill("");
+
+        // First entry gets metadata
+        if (index === 0) {
+          row[0] = product;
+          row[1] = repo;
+          row[2] = entrypoint;
+        }
+
+        row[3] = usage.package || "";
+        row[4] = usage.function || "";
+        // row[5] and row[6] left blank for Status and Comment
+        row[7] = buildDependencyGraphJS(usage.call_tree);
+
+        csvRows.push(row);
+      });
+
+      const csvContent = csvRows.map(e => e.map(cell => `"${(cell || "").replace(/"/g, '""')}"`).join(",")).join("\n");
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+
+      const downloadLink = document.createElement("a");
+      downloadLink.href = URL.createObjectURL(blob);
+      // extract file name from fileNameDiv.
+      const fileNameRaw = fileNameDiv.textContent.replace(/^Loaded file:\s*/, '');
+      // take file name from earlier and remove .json suffix, use as prefix for csv file.
+      downloadLink.download = fileNameRaw.slice(0, -5) + ".csv";
+      downloadLink.style.display = "none";
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      document.body.removeChild(downloadLink);
+    });
+
+    function buildDependencyGraphJS(callTree) {
+      if (!Array.isArray(callTree) || callTree.length === 0) return "";
+      return callTree.map(node => {
+        const func = extractFunctionNameJS(node.function);
+        return `${node.package_path}.${func}`;
+      }).join(" -> ");
+    }
+
+    function extractFunctionNameJS(full) {
+      if (!full) return "";
+      const parts = full.split(".");
+      return parts[parts.length - 1];
+    }
 
       // Add click listeners for call-labels
       document.querySelectorAll('.call-label').forEach(el => {
