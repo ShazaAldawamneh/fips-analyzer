@@ -147,6 +147,8 @@
     </div>
   <div id="visualization"></div>
   <script>
+    // track copies of modules - so module name isn't constantly copied over
+    window._moduleCopyCount = {};
     const dropZone = document.getElementById('drop-zone');
     const viz = document.getElementById('visualization');
     const filterIndicator = document.getElementById('filter-indicator');
@@ -232,8 +234,14 @@
                 html += `<span class="call-arrow">→</span>`;
               }
               html += `<span class="call-label" title="Package: ${node.package_path}" data-package="${node.package_path}">${node.function}</span>`;
-              if (index === d.call_tree.length - 1) {
-                html += `<span class='copy-call-tree-btn' title='Copy call tree' style='margin-left:0.4em;vertical-align:middle;cursor:pointer;display:inline-block;'>📋</span><span class='copy-confirm' style='display:none;margin-left:0.4em;color:#27ae60;font-size:0.95em;'>Copied!</span>`;
+              if (index === d.call_tree.length - 1) { // replaces call graph copy with tab separated values (TSV) copy for excel sheet
+                html += `
+                        <span 
+                          class='copy-single-usage-btn' 
+                          title='Copy usage to spreadsheet' 
+                          style='margin-left:0.4em;cursor:pointer;display:inline-block;'>📋</span>
+                        <span class='copy-confirm' style='display:none;margin-left:0.4em;color:#27ae60;font-size:0.95em;'>Copied!</span>
+                      `;
               }
             });
             html += `</div></div>`;
@@ -243,62 +251,53 @@
         html += '</ul></div>';
         html += '</div>';
       });
-      // add download button for csv
-      html += '<button id="download-csv-btn" class="filter-btn" style="margin-bottom: 1em;">Download CSV</button>'
       viz.innerHTML = html;
 
-      // add event listener for download button
-      document.getElementById('download-csv-btn').addEventListener('click', () => {
-      if (!currentData || !currentData.detected_usages) return ;
+      // Add click listeners for copy-single-usage-btn
+      document.querySelectorAll('.copy-single-usage-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
 
-      // placeholders, to give idea of what to enter
-      const product = prompt("Enter Product Name:", "OpenShift API Server");
-      const repo = prompt("Enter Repository URL:", "https://github.com/example/repo");
-      const entrypoint = prompt("Enter Entrypoint Path:", "cmd/example/main.go");
+          const li = btn.closest('li');
+          const usage = {
+            function: li.querySelector('b')?.textContent || "",
+            caller: li.textContent.match(/called by (.*?) \(/)?.[1] || "",
+            callSite: li.textContent.match(/\((.*?),/)?.[1] || "",
+            packagePath: li.textContent.match(/,\s(.*?)\)/)?.[1] || "",
+            module: li.closest('.group')?.querySelector('.module')?.textContent.match(/Module:\s(.*?)\s\(/)?.[1] || "",
+            callTree: []
+          };
 
-      if (!product || !repo || !entrypoint) {
-        alert("All metadata fields are required.");
-        return;
-      }
+          const callLabels = li.querySelectorAll('.call-label');
+          callLabels.forEach(el => {
+            usage.callTree.push(el.getAttribute('data-package') + "." + el.textContent);
+          });
 
-      const csvRows = [
-        ["Product", "Repository", "Entrypoint", "Crypto module", "Function called", "Status", "Comment", "Dependency Graph"]
-      ];
+          // Track if this is first copy for the module
+          const moduleKey = usage.module;
+          const isFirstInModule = !window._moduleCopyCount[moduleKey];
+          window._moduleCopyCount[moduleKey] = (window._moduleCopyCount[moduleKey] || 0) + 1;
 
-      const usages = currentData.detected_usages.slice().sort((a, b) => a.function.localeCompare(b.function));
+          const fields = [
+            "", // product
+            "", // repo
+            "", // entrypoint
+            isFirstInModule ? usage.module : "",  // Include module only once
+            usage.function,
+            "", // Status
+            "", // Comment
+            usage.callTree.join(" -> ")
+          ];
 
-      usages.forEach((usage, index) => {
-        const row = Array(8).fill("");
+          const tabSeparated = fields.map(f => f.replace(/\t/g, " ")).join("\t");
 
-        // First entry gets metadata
-        if (index === 0) {
-          row[0] = product;
-          row[1] = repo;
-          row[2] = entrypoint;
-        }
-
-        row[3] = usage.package || "";
-        row[4] = usage.function || "";
-        // row[5] and row[6] left blank for Status and Comment
-        row[7] = buildDependencyGraphJS(usage.call_tree);
-
-        csvRows.push(row);
+          navigator.clipboard.writeText(tabSeparated).then(() => {
+            const confirm = btn.nextElementSibling;
+            confirm.style.display = 'inline';
+            setTimeout(() => { confirm.style.display = 'none'; }, 1200);
+          });
+        });
       });
-
-      const csvContent = csvRows.map(e => e.map(cell => `"${(cell || "").replace(/"/g, '""')}"`).join(",")).join("\n");
-      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-
-      const downloadLink = document.createElement("a");
-      downloadLink.href = URL.createObjectURL(blob);
-      // extract file name from fileNameDiv.
-      const fileNameRaw = fileNameDiv.textContent.replace(/^Loaded file:\s*/, '');
-      // take file name from earlier and remove .json suffix, use as prefix for csv file.
-      downloadLink.download = fileNameRaw.slice(0, -5) + ".csv";
-      downloadLink.style.display = "none";
-      document.body.appendChild(downloadLink);
-      downloadLink.click();
-      document.body.removeChild(downloadLink);
-    });
 
     function buildDependencyGraphJS(callTree) {
       if (!Array.isArray(callTree) || callTree.length === 0) return "";
