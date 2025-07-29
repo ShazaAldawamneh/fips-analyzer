@@ -147,6 +147,8 @@
     </div>
   <div id="visualization"></div>
   <script>
+    // track copies of modules - so module name isn't constantly copied over
+    window._moduleCopyCount = {};
     const dropZone = document.getElementById('drop-zone');
     const viz = document.getElementById('visualization');
     const filterIndicator = document.getElementById('filter-indicator');
@@ -232,8 +234,14 @@
                 html += `<span class="call-arrow">→</span>`;
               }
               html += `<span class="call-label" title="Package: ${node.package_path}" data-package="${node.package_path}">${node.function}</span>`;
-              if (index === d.call_tree.length - 1) {
-                html += `<span class='copy-call-tree-btn' title='Copy call tree' style='margin-left:0.4em;vertical-align:middle;cursor:pointer;display:inline-block;'>📋</span><span class='copy-confirm' style='display:none;margin-left:0.4em;color:#27ae60;font-size:0.95em;'>Copied!</span>`;
+              if (index === d.call_tree.length - 1) { // replaces call graph copy with tab separated values (TSV) copy for excel sheet
+                html += `
+                        <span 
+                          class='copy-single-usage-btn' 
+                          title='Copy usage to spreadsheet' 
+                          style='margin-left:0.4em;cursor:pointer;display:inline-block;'>📋</span>
+                        <span class='copy-confirm' style='display:none;margin-left:0.4em;color:#27ae60;font-size:0.95em;'>Copied!</span>
+                      `;
               }
             });
             html += `</div></div>`;
@@ -244,6 +252,66 @@
         html += '</div>';
       });
       viz.innerHTML = html;
+
+      // Add click listeners for copy-single-usage-btn
+      document.querySelectorAll('.copy-single-usage-btn').forEach(btn => {
+        btn.addEventListener('click', function(e) {
+          e.stopPropagation();
+
+          const li = btn.closest('li');
+          const usage = {
+            function: li.querySelector('b')?.textContent || "",
+            caller: li.textContent.match(/called by (.*?) \(/)?.[1] || "",
+            callSite: li.textContent.match(/\((.*?),/)?.[1] || "",
+            packagePath: li.textContent.match(/,\s(.*?)\)/)?.[1] || "",
+            module: li.closest('.group')?.querySelector('.module')?.textContent.match(/Module:\s(.*?)\s\(/)?.[1] || "",
+            callTree: []
+          };
+
+          const callLabels = li.querySelectorAll('.call-label');
+          callLabels.forEach(el => {
+            usage.callTree.push(el.getAttribute('data-package') + "." + el.textContent);
+          });
+
+          // Track if this is first copy for the module
+          const moduleKey = usage.module;
+          const isFirstInModule = !window._moduleCopyCount[moduleKey];
+          window._moduleCopyCount[moduleKey] = (window._moduleCopyCount[moduleKey] || 0) + 1;
+
+          const fields = [
+            "", // product
+            "", // repo
+            "", // entrypoint
+            isFirstInModule ? usage.module : "",  // Include module only once
+            usage.function,
+            "", // Status
+            "", // Comment
+            usage.callTree.join(" -> ")
+          ];
+
+          const tabSeparated = fields.map(f => f.replace(/\t/g, " ")).join("\t");
+
+          navigator.clipboard.writeText(tabSeparated).then(() => {
+            const confirm = btn.nextElementSibling;
+            confirm.style.display = 'inline';
+            setTimeout(() => { confirm.style.display = 'none'; }, 1200);
+          });
+        });
+      });
+
+    function buildDependencyGraphJS(callTree) {
+      if (!Array.isArray(callTree) || callTree.length === 0) return "";
+      return callTree.map(node => {
+        const func = extractFunctionNameJS(node.function);
+        return `${node.package_path}.${func}`;
+      }).join(" -> ");
+    }
+
+    function extractFunctionNameJS(full) {
+      if (!full) return "";
+      const parts = full.split(".");
+      return parts[parts.length - 1];
+    }
 
       // Add click listeners for call-labels
       document.querySelectorAll('.call-label').forEach(el => {
